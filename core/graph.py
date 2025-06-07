@@ -1,13 +1,18 @@
 from typing import Annotated, Any
 from typing_extensions import TypedDict
-
+import sqlparse
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import AnyMessage, add_messages
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda, RunnableWithFallbacks
 from langgraph.prebuilt import ToolNode
 from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.messages import HumanMessage
+from prompt.prompt_templates import query_gen_system
+from langchain_core.prompts import ChatPromptTemplate
 
+
+import re
 from core.llm_config import get_llm
 
 from prompt.prompt_templates import query_check_prompt, query_gen_prompt
@@ -20,7 +25,7 @@ import logging
 
 # Setup logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Captures everything from DEBUG and up
+    # level=logging.DEBUG,  # Captures everything from DEBUG and up
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler()  
@@ -38,7 +43,7 @@ class SubmitFinalAnswer(BaseModel):
 
 # Bind prompts with tools
 query_check = query_check_prompt | llm.bind_tools([db_query_tool])
-query_gen = query_gen_prompt | llm.bind_tools([SubmitFinalAnswer])
+# query_gen = query_gen_prompt | llm.bind_tools([SubmitFinalAnswer])
 llm_to_get_schema = llm.bind_tools([get_schema_tool])
 
 # State definition
@@ -83,43 +88,72 @@ def check_the_given_query(state: State):
     return {"messages": [query_check.invoke({"messages": [state["messages"][-1]]})]}
 
 def generation_query(state: State):
-    # Extract latest human message
-    user_msg = next((m for m in reversed(state["messages"]) if m.type == "human"), None)
+    
+    logger.info("Running query generation...")
 
-    # Extract tool messages from earlier nodes
+    # Extract the latest user message and context
+    user_msg = next((m for m in reversed(state["messages"]) if m.type == "human"), None)
     table_msg = next((m for m in reversed(state["messages"])
                       if isinstance(m, ToolMessage) and m.name == "sql_db_list_tables"), None)
     schema_msg = next((m for m in reversed(state["messages"])
                        if isinstance(m, ToolMessage) and m.name == "sql_db_schema"), None)
 
-    # Construct enriched prompt
+    # Build prompt context
     full_context = []
-
     if table_msg:
         full_context.append(
             AIMessage(content=f"Here are the available tables in the database:\n\n{table_msg.content}")
         )
-
     if schema_msg:
-        # ✅ Clean schema content by removing sample rows
         cleaned_schema = schema_msg.content.split("/*")[0].strip()
-        full_context.append(
-            AIMessage(content=f"Here is the schema of the relevant tables:\n\n{cleaned_schema}")
-        )
+        schema_block = f"### SCHEMA:\n{cleaned_schema}"
 
+        query_gen_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", query_gen_system + "\n\n" + schema_block),
+            ("placeholder", "{messages}")
+        ]
+    )
+        query_gen = query_gen_prompt | llm.bind_tools([SubmitFinalAnswer])
     if user_msg:
         full_context.append(user_msg)
 
-    
-
     logger.debug("🧠 QUERY_GEN CONTEXT:")
-    for msg in full_context:
-        logger.debug(f"{msg.type.upper()}: {msg.content.strip()[:300]}...")
+    # for msg in full_context:
+        # logger.debug(f"{msg.type.upper()}: {msg.content.strip()[:300]}...\n")
 
-
+    # Generate output
     message = query_gen.invoke({"messages": full_context})
 
-    # Check if LLM incorrectly called a non-approved tool
+    # Case 1: LLM used correct SubmitFinalAnswer tool
+    if message.tool_calls:
+        for tc in message.tool_calls:
+            if tc["name"] == "SubmitFinalAnswer":
+                return {"messages": [message]}
+
+    # Case 2: Raw SQL content returned — try to run it!
+    sql_query = message.content.strip()
+    
+    def is_select_query(sql: str) -> bool:
+        parsed = sqlparse.parse(sql.strip())
+        return parsed and parsed[0].get_type() == "SELECT"
+    
+    sql_query = message.content.strip().rstrip(";")
+    if is_select_query(sql_query):
+        result = db_query_tool(sql_query)
+        final_message = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "SubmitFinalAnswer",
+                "args": {"final_answer": result},
+                "id": "tool_auto_generated"
+            }]
+        )
+        return {"messages": [message, final_message]}
+
+    
+
+    # Case 3: LLM hallucinated wrong tool
     tool_messages = []
     if message.tool_calls:
         for tc in message.tool_calls:
@@ -128,9 +162,7 @@ def generation_query(state: State):
                     ToolMessage(
                         content=(
                             f"Error: The wrong tool was called: {tc['name']}. "
-                            f"Please fix your mistakes. Remember to only call SubmitFinalAnswer "
-                            f"to submit the final answer. Generated queries should be outputted "
-                            f"WITHOUT a tool call."
+                            f"Please fix your mistakes. Remember to only call SubmitFinalAnswer."
                         ),
                         tool_call_id=tc["id"],
                     )
@@ -139,11 +171,16 @@ def generation_query(state: State):
     return {"messages": [message] + tool_messages}
 
 
+
 def should_continue(state: State):
     messages = state["messages"]
     last_message = messages[-1]
     if getattr(last_message, "tool_calls", None):
-        return END
+        names = [tc["name"] for tc in last_message.tool_calls]
+        if names == ["SubmitFinalAnswer"]:
+            return END        # Only end when final answer is truly final
+        else:
+            return "query_gen"
     if last_message.content.startswith("Error:"):
         return "query_gen"
     else:

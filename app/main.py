@@ -9,7 +9,8 @@ from core.db import db  # shared SQLDatabase
 from sqlite3 import OperationalError
 import sys
 import os
-
+from core.db import initialize_db
+initialize_db()
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ---------- UI Setup ----------
