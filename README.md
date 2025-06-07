@@ -1,7 +1,7 @@
 # SQL-Agent---LangGraph
 
 ## In progresss
-
+```
 sql_agent/
 │
 ├── 📁 app/                        # Streamlit frontend interface
@@ -26,4 +26,4 @@ sql_agent/
 │
 ├── requirements.txt              # Required packages
 └── README.md                     # Project overview
-
+```
