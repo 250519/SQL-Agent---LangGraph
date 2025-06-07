@@ -1,7 +1,8 @@
 import sqlite3
 from pathlib import Path
+from langchain_community.utilities import SQLDatabase
 
-DB_PATH = "data/mydb.db"
+DB_PATH = "mydb.db"
 
 def get_connection():
     """
@@ -55,3 +56,6 @@ def initialize_db():
 
     conn.commit()
     conn.close()
+
+# LangChain-compatible database wrapper
+db = SQLDatabase.from_uri(f"sqlite:///{DB_PATH}")

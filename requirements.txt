@@ -1,0 +1,12 @@
+langchain
+langgraph
+langchain-community
+langchain-core
+langchain-groq
+openai
+streamlit
+fastapi
+uvicorn
+python-dotenv
+sqlite-utils
+pandas

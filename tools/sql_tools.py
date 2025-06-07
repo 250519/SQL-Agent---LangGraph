@@ -1,7 +1,8 @@
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_core.tools import tool
 from core.db import db  # Import the shared database object
-from core.llm_config import llm  # Import the shared LLM
+from core.llm_config import get_llm  # Import the shared LLM
+llm=get_llm()  # Initialize the LLM
 
 # Create toolkit and extract tools
 toolkit = SQLDatabaseToolkit(db=db, llm=llm)

@@ -6,15 +6,35 @@ from langgraph.graph.message import AnyMessage, add_messages
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda, RunnableWithFallbacks
 from langgraph.prebuilt import ToolNode
+from langchain_core.pydantic_v1 import BaseModel, Field
 
-from core.llm_config import llm
+from core.llm_config import get_llm
+
 from prompt.prompt_templates import query_check_prompt, query_gen_prompt
 from tools.sql_tools import (
     db_query_tool,
-    SubmitFinalAnswer,
     get_schema_tool,
     list_tables_tool,
 )
+import logging
+
+# Setup logging
+logging.basicConfig(
+    level=logging.DEBUG,  # Captures everything from DEBUG and up
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler()  
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+
+llm = get_llm()
+
+class SubmitFinalAnswer(BaseModel):
+    """Submit the final answer to the user, based on the user query"""
+    final_answer: str = Field(..., description="The final answer to submit to the user.")
 
 # Bind prompts with tools
 query_check = query_check_prompt | llm.bind_tools([db_query_tool])
@@ -92,9 +112,10 @@ def generation_query(state: State):
 
     
 
-    print("\n🧠 QUERY_GEN CONTEXT:")
+    logger.debug("🧠 QUERY_GEN CONTEXT:")
     for msg in full_context:
-        print(f"{msg.type.upper()}: {msg.content.strip()[:300]}...\n")
+        logger.debug(f"{msg.type.upper()}: {msg.content.strip()[:300]}...")
+
 
     message = query_gen.invoke({"messages": full_context})
 
@@ -129,7 +150,9 @@ def should_continue(state: State):
         return "correct_query"
 
 def llm_get_schema(state: State):
-    print("this is my state", state)
+    # print("this is my state", state)
+    logger.debug("📥 Incoming state: %s", state)
+
     response = llm_to_get_schema.invoke(state["messages"])
     return {"messages": [response]}
 
