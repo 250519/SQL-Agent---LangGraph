@@ -1,6 +1,10 @@
 # SQL-Agent---LangGraph
 
-## In progresss
+## Demo Video
+
+https://github.com/user-attachments/assets/4dbe060d-8e7c-4f4e-8102-5a05f669398a
+
+## Project Structure
 ```
 sql_agent/
 │
